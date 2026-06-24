@@ -130,6 +130,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     this.logger.log(`update_room_settings from ${client.id} in room ${data.roomId}`);
     try {
+      const room = this.lobbyService.getRoom(data.roomId);
+      if (!room) throw new Error('Room not found');
+      if (room.hostId !== client.id) {
+        throw new Error('Only the host can update room settings');
+      }
       const roomState = this.lobbyService.updateRoomSettings(
         data.roomId,
         data.settings,
@@ -149,6 +154,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     this.logger.log(`start_game event from ${client.id} for room ${data.roomId}`);
     try {
+      const room = this.lobbyService.getRoom(data.roomId);
+      if (!room) throw new Error('Room not found');
+      if (room.hostId !== client.id) {
+        throw new Error('Only the host can start the game');
+      }
       const roomState = this.gameLoopService.startGame(
         data.roomId,
         (updatedState) => {

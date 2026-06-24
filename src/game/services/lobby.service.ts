@@ -76,6 +76,7 @@ export class LobbyService {
         ...settings,
         maxPlayers: this.validateMaxPlayers(settings.maxPlayers),
       },
+      hostId: hostSocketId,
     };
 
     this.roomRepository.save(roomId, roomState);
@@ -173,6 +174,9 @@ export class LobbyService {
           onRoomDeleted(roomState.roomId);
           affectedRooms.push({ roomId: roomState.roomId, roomState: null });
         } else {
+          if (roomState.hostId === socketId) {
+            roomState.hostId = roomState.players[0].id;
+          }
           this.roomRepository.save(roomState.roomId, roomState);
           affectedRooms.push({ roomId: roomState.roomId, roomState });
         }
