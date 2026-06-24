@@ -8,8 +8,9 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { GameRoomService } from './game-room.service';
-import { GameSettings } from './interfaces/game.interface';
+import { LobbyService } from './services/lobby.service';
+import { GameLoopService } from './services/game-loop.service';
+import { GameSettings } from './domain/interfaces/game.interface';
 import { Logger } from '@nestjs/common';
 
 @WebSocketGateway({
@@ -23,7 +24,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private readonly logger = new Logger(GameGateway.name);
 
-  constructor(private readonly gameRoomService: GameRoomService) {}
+  constructor(
+    private readonly lobbyService: LobbyService,
+    private readonly gameLoopService: GameLoopService,
+  ) {}
 
   /**
    * Hook called when a client connects
@@ -37,7 +41,10 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
    */
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
-    const affectedRooms = this.gameRoomService.handlePlayerDisconnect(client.id);
+    const affectedRooms = this.lobbyService.handlePlayerDisconnect(
+      client.id,
+      (roomId) => this.gameLoopService.cleanRoomTimer(roomId),
+    );
 
     for (const { roomId, roomState } of affectedRooms) {
       if (roomState) {
@@ -61,7 +68,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`create_room event received from ${client.id} with nickname: ${data.nickname}`);
     
     try {
-      const roomState = this.gameRoomService.createRoom(
+      const roomState = this.lobbyService.createRoom(
         data.nickname,
         data.avatar,
         data.settings,
@@ -95,7 +102,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     );
 
     try {
-      const roomState = this.gameRoomService.joinRoom(
+      const roomState = this.lobbyService.joinRoom(
         data.roomId,
         data.nickname,
         data.avatar,
@@ -112,6 +119,133 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return roomState;
     } catch (error) {
       this.logger.error(`Error joining room: ${error.message}`);
+      return { error: error.message };
+    }
+  }
+
+  @SubscribeMessage('update_room_settings')
+  handleUpdateRoomSettings(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; settings: Partial<GameSettings> },
+  ) {
+    this.logger.log(`update_room_settings from ${client.id} in room ${data.roomId}`);
+    try {
+      const roomState = this.lobbyService.updateRoomSettings(
+        data.roomId,
+        data.settings,
+      );
+      this.server.to(roomState.roomId).emit('room_state_updated', roomState);
+      return roomState;
+    } catch (error) {
+      this.logger.error(`Error updating settings: ${error.message}`);
+      return { error: error.message };
+    }
+  }
+
+  @SubscribeMessage('start_game')
+  handleStartGame(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string },
+  ) {
+    this.logger.log(`start_game event from ${client.id} for room ${data.roomId}`);
+    try {
+      const roomState = this.gameLoopService.startGame(
+        data.roomId,
+        (updatedState) => {
+          this.server.to(updatedState.roomId).emit('room_state_updated', updatedState);
+        },
+        (chatMsg) => {
+          this.server.to(data.roomId.toUpperCase()).emit('new_chat_message', chatMsg);
+        },
+      );
+      return roomState;
+    } catch (error) {
+      this.logger.error(`Error starting game: ${error.message}`);
+      return { error: error.message };
+    }
+  }
+
+  @SubscribeMessage('draw_stroke')
+  handleDrawStroke(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; stroke: any },
+  ) {
+    client.to(data.roomId.toUpperCase()).emit('drawing_stream', data.stroke);
+  }
+
+  @SubscribeMessage('clear_canvas')
+  handleClearCanvas(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string },
+  ) {
+    client.to(data.roomId.toUpperCase()).emit('clear_drawing');
+  }
+
+  @SubscribeMessage('send_message')
+  handleSendMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; text: string },
+  ) {
+    try {
+      const { isCorrect, chatMsg } = this.gameLoopService.handleChatMessage(
+        data.roomId,
+        client.id,
+        data.text,
+      );
+
+      this.server.to(data.roomId.toUpperCase()).emit('new_chat_message', chatMsg);
+
+      if (isCorrect) {
+        this.logger.log(`Player ${client.id} guessed correctly in room ${data.roomId}`);
+      }
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Error handling message: ${error.message}`);
+      return { error: error.message };
+    }
+  }
+
+  @SubscribeMessage('submit_guess')
+  handleSubmitGuess(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; guess: string },
+  ) {
+    try {
+      const { isCorrect, chatMsg } = this.gameLoopService.handleModeBGuess(
+        data.roomId,
+        client.id,
+        data.guess,
+      );
+
+      this.server.to(data.roomId.toUpperCase()).emit('new_chat_message', chatMsg);
+      return { success: true, isCorrect };
+    } catch (error) {
+      this.logger.error(`Error submitting guess: ${error.message}`);
+      return { error: error.message };
+    }
+  }
+
+  @SubscribeMessage('leave_room')
+  handleLeaveRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string },
+  ) {
+    this.logger.log(`leave_room event received from ${client.id} for room ${data.roomId}`);
+    try {
+      const affectedRooms = this.lobbyService.handlePlayerDisconnect(
+        client.id,
+        (roomId) => this.gameLoopService.cleanRoomTimer(roomId),
+      );
+      client.leave(data.roomId.toUpperCase());
+
+      for (const { roomId, roomState } of affectedRooms) {
+        if (roomState) {
+          this.server.to(roomId).emit('room_state_updated', roomState);
+        }
+      }
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Error leaving room: ${error.message}`);
       return { error: error.message };
     }
   }
