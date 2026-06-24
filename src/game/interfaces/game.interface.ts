@@ -35,6 +35,11 @@ export interface RoomState {
   phase: 'LOBBY' | 'WORD_SELECTION' | 'PLAYING' | 'REVEAL' | 'GAME_OVER';
   currentTurnPlayerId: string | null;
   guesserId: string | null;
+  drawerId?: string | null;
   currentWord: string | null;
+  obfuscatedWord?: string | null;
   timeLeft: number;
+  roundNumber?: number;
+  maxRounds?: number;
+  settings?: GameSettings;
 }
