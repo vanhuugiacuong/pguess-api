@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pguess Socket.io Visual Tester</title>
+    <!-- Google Fonts: Inter -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Socket.io Client CDN -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <style>
+      :root {
+        --bg-color: #0f172a;
+        --card-bg: rgba(30, 41, 59, 0.7);
+        --border-color: rgba(255, 255, 255, 0.1);
+        --accent-color: #6366f1;
+        --accent-hover: #4f46e5;
+        --text-color: #f8fafc;
+        --text-muted: #94a3b8;
+        --success-color: #10b981;
+        --danger-color: #ef4444;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 2rem;
+        background-image:
+          radial-gradient(
+            at 0% 0%,
+            rgba(99, 102, 241, 0.15) 0px,
+            transparent 50%
+          ),
+          radial-gradient(
+            at 100% 100%,
+            rgba(16, 185, 129, 0.1) 0px,
+            transparent 50%
+          );
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 2rem;
+      }
+
+      h1 {
+        font-size: 2rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, #818cf8, #34d399);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem;
+      }
+
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--border-color);
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--danger-color);
+        box-shadow: 0 0 8px var(--danger-color);
+      }
+
+      .status-dot.connected {
+        background: var(--success-color);
+        box-shadow: 0 0 8px var(--success-color);
+      }
+
+      .container {
+        width: 100%;
+        max-width: 1000px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+      }
+
+      @media (max-width: 768px) {
+        .container {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .card {
+        background: var(--card-bg);
+        backdrop-filter: blur(12px);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 1.5rem;
+        box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+      }
+
+      .card-title {
+        font-size: 1.125rem;
+        font-weight: 600;
+        margin-bottom: 1.25rem;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 0.5rem;
+        color: #cbd5e1;
+      }
+
+      .form-group {
+        margin-bottom: 1rem;
+      }
+
+      label {
+        display: block;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--text-muted);
+        margin-bottom: 0.375rem;
+      }
+
+      input,
+      select {
+        width: 100%;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid var(--border-color);
+        color: white;
+        font-family: inherit;
+        font-size: 0.95rem;
+        transition: all 0.2s;
+      }
+
+      input:focus,
+      select:focus {
+        outline: none;
+        border-color: var(--accent-color);
+        box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+      }
+
+      .btn {
+        width: 100%;
+        padding: 0.75rem 1.25rem;
+        border-radius: 8px;
+        background: var(--accent-color);
+        color: white;
+        border: none;
+        font-family: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        margin-top: 0.5rem;
+      }
+
+      .btn:hover {
+        background: var(--accent-hover);
+        transform: translateY(-1px);
+      }
+
+      .btn:active {
+        transform: translateY(0);
+      }
+
+      .btn-secondary {
+        background: transparent;
+        border: 1px solid var(--accent-color);
+        color: var(--accent-color);
+      }
+
+      .btn-secondary:hover {
+        background: rgba(99, 102, 241, 0.1);
+      }
+
+      .actions-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+
+      /* Logs & Room State */
+      .log-panel {
+        font-family: monospace;
+        font-size: 0.85rem;
+        height: 250px;
+        overflow-y: auto;
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 1rem;
+        color: #38bdf8;
+      }
+
+      .log-entry {
+        margin-bottom: 0.5rem;
+        line-height: 1.4;
+        border-left: 2px solid var(--accent-color);
+        padding-left: 0.5rem;
+      }
+
+      .log-entry.event-in {
+        border-color: var(--success-color);
+      }
+
+      .log-entry.event-error {
+        border-color: var(--danger-color);
+        color: var(--danger-color);
+      }
+
+      .state-panel {
+        font-family: monospace;
+        font-size: 0.85rem;
+        height: 250px;
+        overflow-y: auto;
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 1rem;
+        color: #cbd5e1;
+      }
+
+      .player-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-top: 1rem;
+      }
+
+      .player-card {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .player-info {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .badge {
+        font-size: 0.7rem;
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .badge-host {
+        background: #eab308;
+        color: #0f172a;
+      }
+
+      .badge-me {
+        background: var(--accent-color);
+        color: white;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Pguess Socket.io Visual Tester</h1>
+      <div class="status-badge">
+        <div id="status-dot" class="status-dot"></div>
+        <span id="status-text">Disconnected</span>
+        <span
+          id="socket-id"
+          style="
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-left: 0.5rem;
+          "
+        ></span>
+      </div>
+    </header>
+
+    <div class="container">
+      <!-- Left panel: Form controls -->
+      <div class="card">
+        <div class="card-title">Cấu hình kết nối & Thao tác</div>
+
+        <div class="form-group">
+          <label for="server-url">Địa chỉ Server</label>
+          <input type="text" id="server-url" value="http://localhost:3000" />
+        </div>
+
+        <div
+          class="actions-grid"
+          style="grid-template-columns: 1fr; margin-bottom: 1.5rem"
+        >
+          <button id="connect-btn" class="btn">Kết nối</button>
+        </div>
+
+        <div class="form-group">
+          <label for="nickname">Biệt danh (Nickname)</label>
+          <input type="text" id="nickname" value="Player_One" />
+        </div>
+
+        <hr
+          style="
+            border: 0;
+            border-top: 1px solid var(--border-color);
+            margin: 1.5rem 0;
+          "
+        />
+
+        <!-- Tab 1: Tạo phòng -->
+        <div id="create-room-section">
+          <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: #cbd5e1">
+            Tạo phòng mới
+          </h3>
+          <div class="form-group">
+            <label for="mode">Chế độ chơi (Game Mode)</label>
+            <select id="mode">
+              <option value="A">Mode A (1 Drawer, others Guess)</option>
+              <option value="B">Mode B (All Draw, Reveal & Guess)</option>
+            </select>
+          </div>
+          <div class="actions-grid">
+            <div class="form-group">
+              <label for="draw-limit">Thời gian vẽ (Giây)</label>
+              <input type="number" id="draw-limit" value="80" />
+            </div>
+            <div class="form-group">
+              <label for="reveal-limit">Thời gian hiện (Giây)</label>
+              <input type="number" id="reveal-limit" value="15" />
+            </div>
+          </div>
+          <button id="create-btn" class="btn" disabled>
+            Tạo phòng (create_room)
+          </button>
+        </div>
+
+        <hr
+          style="
+            border: 0;
+            border-top: 1px solid var(--border-color);
+            margin: 1.5rem 0;
+          "
+        />
+
+        <!-- Tab 2: Tham gia phòng -->
+        <div id="join-room-section">
+          <h3 style="font-size: 1rem; margin-bottom: 0.75rem; color: #cbd5e1">
+            Tham gia phòng có sẵn
+          </h3>
+          <div class="form-group">
+            <label for="room-id-input">Mã phòng (Room ID - 6 ký tự)</label>
+            <input
+              type="text"
+              id="room-id-input"
+              placeholder="VD: ABCXYZ"
+              style="text-transform: uppercase"
+            />
+          </div>
+          <button id="join-btn" class="btn btn-secondary" disabled>
+            Tham gia phòng (join_room)
+          </button>
+        </div>
+      </div>
+
+      <!-- Right panel: Room State / Event Log -->
+      <div style="display: flex; flex-direction: column; gap: 1.5rem">
+        <!-- Room Info -->
+        <div class="card" style="flex: 1">
+          <div class="card-title">
+            Trạng thái phòng hiện tại:
+            <span
+              id="current-room-title"
+              style="color: var(--success-color); font-weight: 700"
+              >CHƯA VÀO PHÒNG</span
+            >
+          </div>
+          <div id="room-info-display" style="display: none">
+            <p
+              style="
+                font-size: 0.9rem;
+                color: var(--text-muted);
+                margin-bottom: 0.75rem;
+              "
+            >
+              Trạng thái (Phase):
+              <strong id="room-phase" style="color: white; font-weight: 600"
+                >LOBBY</strong
+              >
+              | Thời gian:
+              <strong id="room-time" style="color: white; font-weight: 600"
+                >80s</strong
+              >
+            </p>
+            <h4
+              style="font-size: 0.9rem; margin-bottom: 0.5rem; color: #cbd5e1"
+            >
+              Danh sách người chơi:
+            </h4>
+            <div id="player-list-container" class="player-list"></div>
+          </div>
+          <div
+            id="room-info-placeholder"
+            style="
+              color: var(--text-muted);
+              font-style: italic;
+              font-size: 0.9rem;
+              text-align: center;
+              padding: 2rem 0;
+            "
+          >
+            Chưa kết nối vào phòng nào. Hãy tạo phòng mới hoặc tham gia phòng có
+            sẵn.
+          </div>
+        </div>
+
+        <!-- Live Logs / Raw JSON -->
+        <div class="card">
+          <div class="card-title">Nhật ký sự kiện (Logs & State JSON)</div>
+          <div
+            style="
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 0.5rem;
+              margin-bottom: 0.75rem;
+            "
+          >
+            <button
+              id="show-logs-btn"
+              class="btn"
+              style="margin-top: 0; padding: 0.4rem; font-size: 0.8rem"
+            >
+              Logs
+            </button>
+            <button
+              id="show-json-btn"
+              class="btn btn-secondary"
+              style="margin-top: 0; padding: 0.4rem; font-size: 0.8rem"
+            >
+              Raw JSON State
+            </button>
+          </div>
+          <div id="log-panel" class="log-panel"></div>
+          <pre
+            id="state-panel"
+            class="state-panel"
+            style="display: none; white-space: pre-wrap; word-break: break-all"
+          ></pre>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let socket = null;
+      let currentRoomState = null;
+
+      // DOM Elements
+      const serverUrlInput = document.getElementById('server-url');
+      const connectBtn = document.getElementById('connect-btn');
+      const statusDot = document.getElementById('status-dot');
+      const statusText = document.getElementById('status-text');
+      const socketIdSpan = document.getElementById('socket-id');
+
+      const nicknameInput = document.getElementById('nickname');
+      const createBtn = document.getElementById('create-btn');
+      const joinBtn = document.getElementById('join-btn');
+      const modeSelect = document.getElementById('mode');
+      const drawLimitInput = document.getElementById('draw-limit');
+      const revealLimitInput = document.getElementById('reveal-limit');
+      const roomIdInput = document.getElementById('room-id-input');
+
+      const currentRoomTitle = document.getElementById('current-room-title');
+      const roomInfoDisplay = document.getElementById('room-info-display');
+      const roomInfoPlaceholder = document.getElementById(
+        'room-info-placeholder',
+      );
+      const roomPhaseSpan = document.getElementById('room-phase');
+      const roomTimeSpan = document.getElementById('room-time');
+      const playerListContainer = document.getElementById(
+        'player-list-container',
+      );
+
+      const logPanel = document.getElementById('log-panel');
+      const statePanel = document.getElementById('state-panel');
+      const showLogsBtn = document.getElementById('show-logs-btn');
+      const showJsonBtn = document.getElementById('show-json-btn');
+
+      // Log function
+      function addLog(message, type = 'info') {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type === 'in' ? 'event-in' : type === 'error' ? 'event-error' : ''}`;
+        const time = new Date().toLocaleTimeString();
+        entry.innerHTML = `<strong>[${time}]</strong> ${message}`;
+        logPanel.appendChild(entry);
+        logPanel.scrollTop = logPanel.scrollHeight;
+      }
+
+      // Toggle view
+      showLogsBtn.addEventListener('click', () => {
+        logPanel.style.display = 'block';
+        statePanel.style.display = 'none';
+        showLogsBtn.className = 'btn';
+        showJsonBtn.className = 'btn btn-secondary';
+      });
+
+      showJsonBtn.addEventListener('click', () => {
+        logPanel.style.display = 'none';
+        statePanel.style.display = 'block';
+        showLogsBtn.className = 'btn btn-secondary';
+        showJsonBtn.className = 'btn';
+      });
+
+      // Connection Handler
+      connectBtn.addEventListener('click', () => {
+        if (socket && socket.connected) {
+          socket.disconnect();
+          return;
+        }
+
+        const url = serverUrlInput.value.trim();
+        addLog(`Đang kết nối tới ${url}...`);
+
+        socket = io(url, {
+          transports: ['websocket'],
+        });
+
+        socket.on('connect', () => {
+          statusDot.className = 'status-dot connected';
+          statusText.innerText = 'Connected';
+          socketIdSpan.innerText = `(${socket.id})`;
+          connectBtn.innerText = 'Ngắt kết nối';
+          connectBtn.className = 'btn btn-secondary';
+          addLog(`Kết nối thành công! Socket ID: ${socket.id}`, 'in');
+
+          // Enable buttons
+          createBtn.disabled = false;
+          joinBtn.disabled = false;
+        });
+
+        socket.on('disconnect', (reason) => {
+          statusDot.className = 'status-dot';
+          statusText.innerText = 'Disconnected';
+          socketIdSpan.innerText = '';
+          connectBtn.innerText = 'Kết nối';
+          connectBtn.className = 'btn';
+          addLog(`Đã ngắt kết nối: ${reason}`, 'error');
+
+          // Disable buttons
+          createBtn.disabled = true;
+          joinBtn.disabled = true;
+
+          // Reset room view
+          currentRoomState = null;
+          updateRoomView();
+        });
+
+        socket.on('connect_error', (error) => {
+          addLog(`Lỗi kết nối: ${error.message}`, 'error');
+        });
+
+        // Listen to room state updates
+        socket.on('room_state_updated', (roomState) => {
+          addLog(`Nhận sự kiện [room_state_updated] từ Server`, 'in');
+          currentRoomState = roomState;
+          updateRoomView();
+        });
+      });
+
+      // Create Room Handler
+      createBtn.addEventListener('click', () => {
+        if (!socket || !socket.connected) return;
+
+        const nickname = nicknameInput.value.trim() || 'HostPlayer';
+        const settings = {
+          mode: modeSelect.value,
+          drawTimeLimit: parseInt(drawLimitInput.value) || 80,
+          revealTimeLimit: parseInt(revealLimitInput.value) || 15,
+          botCount: 0,
+          wordCategory: 'General',
+        };
+
+        addLog(`Gửi sự kiện [create_room] với Nickname: "${nickname}"...`);
+
+        socket.emit('create_room', { nickname, settings }, (response) => {
+          if (response && response.error) {
+            addLog(`Lỗi từ server: ${response.error}`, 'error');
+          } else {
+            addLog(
+              `Phản hồi thành công từ create_room: ${response.roomId}`,
+              'in',
+            );
+            currentRoomState = response;
+            updateRoomView();
+          }
+        });
+      });
+
+      // Join Room Handler
+      joinBtn.addEventListener('click', () => {
+        if (!socket || !socket.connected) return;
+
+        const nickname = nicknameInput.value.trim() || 'JoinerPlayer';
+        const roomId = roomIdInput.value.trim().toUpperCase();
+
+        if (!roomId) {
+          alert('Vui lòng nhập Mã phòng 6 ký tự');
+          return;
+        }
+
+        addLog(
+          `Gửi sự kiện [join_room] cho phòng "${roomId}" với Nickname: "${nickname}"...`,
+        );
+
+        socket.emit('join_room', { roomId, nickname }, (response) => {
+          if (response && response.error) {
+            addLog(`Lỗi từ server: ${response.error}`, 'error');
+          } else {
+            addLog(`Phản hồi thành công từ join_room!`, 'in');
+            currentRoomState = response;
+            updateRoomView();
+          }
+        });
+      });
+
+      // Helper to update UI with current room state
+      function updateRoomView() {
+        if (!currentRoomState) {
+          currentRoomTitle.innerText = 'CHƯA VÀO PHÒNG';
+          roomInfoDisplay.style.display = 'none';
+          roomInfoPlaceholder.style.display = 'block';
+          statePanel.innerText = '{}';
+          return;
+        }
+
+        // Display JSON State
+        statePanel.innerText = JSON.stringify(currentRoomState, null, 2);
+
+        // Render Info
+        currentRoomTitle.innerText = currentRoomState.roomId;
+        roomPhaseSpan.innerText = currentRoomState.phase;
+        roomTimeSpan.innerText = `${currentRoomState.timeLeft}s`;
+
+        // Render players
+        playerListContainer.innerHTML = '';
+        currentRoomState.players.forEach((player, index) => {
+          const pCard = document.createElement('div');
+          pCard.className = 'player-card';
+
+          const isHost = index === 0;
+          const isMe = player.id === socket.id;
+
+          pCard.innerHTML = `
+          <div class="player-info">
+            <span>${player.name}</span>
+            ${isHost ? '<span class="badge badge-host">Host</span>' : ''}
+            ${isMe ? '<span class="badge badge-me">Bạn</span>' : ''}
+          </div>
+          <div style="color: var(--text-muted); font-size: 0.8rem;">
+            Score: <strong style="color: white;">${player.score}</strong>
+          </div>
+        `;
+          playerListContainer.appendChild(pCard);
+        });
+
+        roomInfoDisplay.style.display = 'block';
+        roomInfoPlaceholder.style.display = 'none';
+      }
+    </script>
+  </body>
+</html>
