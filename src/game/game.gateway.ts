@@ -181,6 +181,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { roomId: string; stroke: any },
   ) {
     client.to(data.roomId.toUpperCase()).emit('drawing_stream', data.stroke);
+    this.gameLoopService.savePlayerStroke(data.roomId, client.id, data.stroke);
   }
 
   @SubscribeMessage('clear_canvas')
@@ -189,6 +190,27 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { roomId: string },
   ) {
     client.to(data.roomId.toUpperCase()).emit('clear_drawing');
+    this.gameLoopService.clearPlayerDrawing(data.roomId, client.id);
+  }
+
+  @SubscribeMessage('submit_drawing')
+  handleSubmitDrawing(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; strokes: any[] },
+  ) {
+    this.logger.log(`submit_drawing event from ${client.id} for room ${data.roomId}`);
+    try {
+      const roomState = this.gameLoopService.handlePlayerSubmitDrawing(
+        data.roomId,
+        client.id,
+        data.strokes,
+      );
+      this.server.to(roomState.roomId).emit('room_state_updated', roomState);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Error submitting drawing: ${error.message}`);
+      return { error: error.message };
+    }
   }
 
   @SubscribeMessage('send_message')

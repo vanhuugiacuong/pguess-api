@@ -6,6 +6,7 @@ export interface Player {
   isDrawing: boolean;
   hasGuessedCorrectly: boolean;
   avatar?: string;
+  drawingData?: any[];
 }
 
 export interface GameSettings {

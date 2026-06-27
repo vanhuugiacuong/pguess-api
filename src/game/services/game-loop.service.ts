@@ -36,7 +36,7 @@ export class GameLoopService {
 
     this.roomCallbacks.set(room.roomId, { onStateUpdate, onChatMessage });
     room.roundNumber = 0;
-    room.maxRounds = room.settings?.mode === 'A' ? room.players.length : 3;
+    room.maxRounds = room.settings?.mode === 'A' ? room.players.length : room.players.length;
 
     this.startNewRound(room.roomId);
     return room;
@@ -57,24 +57,37 @@ export class GameLoopService {
       p.isDrawing = false;
     });
 
-    const randIndex = Math.floor(Math.random() * WORD_BANK.length);
-    room.currentWord = WORD_BANK[randIndex];
-    room.obfuscatedWord = GameRulesEngine.obfuscateWord(room.currentWord);
-
     const mode = room.settings?.mode || 'A';
     if (mode === 'A') {
+      const randIndex = Math.floor(Math.random() * WORD_BANK.length);
+      room.currentWord = WORD_BANK[randIndex];
+      room.obfuscatedWord = GameRulesEngine.obfuscateWord(room.currentWord);
+
       const drawerIndex = (room.roundNumber - 1) % room.players.length;
       room.players[drawerIndex].isDrawing = true;
       room.drawerId = room.players[drawerIndex].id;
       room.guesserId = null;
     } else {
-      const guesserIndex = (room.roundNumber - 1) % room.players.length;
-      room.guesserId = room.players[guesserIndex].id;
-      room.drawerId = null;
+      if (room.roundNumber === 1) {
+        const randIndex = Math.floor(Math.random() * WORD_BANK.length);
+        room.currentWord = WORD_BANK[randIndex];
+        room.obfuscatedWord = GameRulesEngine.obfuscateWord(room.currentWord);
 
-      room.players.forEach((p) => {
-        p.isDrawing = p.id !== room.guesserId;
-      });
+        room.players.forEach((p) => {
+          p.drawingData = undefined;
+        });
+        room.guesserId = room.players[room.players.length - 1].id;
+      }
+
+      const isDrawingTurn = room.roundNumber < room.players.length;
+      if (isDrawingTurn) {
+        const activeDrawerIndex = room.roundNumber - 1;
+        const activeDrawer = room.players[activeDrawerIndex];
+        activeDrawer.isDrawing = true;
+        room.drawerId = activeDrawer.id;
+      } else {
+        room.drawerId = null;
+      }
     }
 
     room.phase = 'PLAYING';
@@ -92,7 +105,9 @@ export class GameLoopService {
           playerName: 'Hệ thống',
           text: mode === 'A'
             ? `Vòng ${room.roundNumber} bắt đầu. ${room.players.find((p) => p.id === room.drawerId)?.name} đang vẽ!`
-            : `Vòng ${room.roundNumber} bắt đầu. Mọi người vẽ từ khóa "${room.currentWord}". ${room.players.find((p) => p.id === room.guesserId)?.name} sẽ đoán!`,
+            : room.roundNumber < room.players.length
+              ? `Vòng ${room.roundNumber} bắt đầu. ${room.players.find((p) => p.id === room.drawerId)?.name} đang vẽ truyền tay!`
+              : `Lượt đoán của ${room.players.find((p) => p.id === room.guesserId)?.name} đã bắt đầu!`,
           timestamp: Date.now(),
           isSystem: true,
           isCorrectGuess: false,
@@ -120,7 +135,7 @@ export class GameLoopService {
       if (room.timeLeft <= 1) {
         clearInterval(timer);
         this.roomTimers.delete(roomId);
-        this.revealRoundResults(roomId);
+        this.handleTimeOver(roomId);
       } else {
         if (room.settings?.mode === 'A') {
           const guessers = room.players.filter((p) => p.id !== room.drawerId);
@@ -141,6 +156,23 @@ export class GameLoopService {
     }, 1000);
 
     this.roomTimers.set(roomId, { timer });
+  }
+
+  private handleTimeOver(roomId: string) {
+    const room = this.roomRepository.get(roomId);
+    if (!room) return;
+
+    const mode = room.settings?.mode || 'A';
+    if (mode === 'A') {
+      this.revealRoundResults(roomId);
+    } else {
+      const isDrawingTurn = (room.roundNumber ?? 1) < room.players.length;
+      if (isDrawingTurn) {
+        this.startNewRound(roomId);
+      } else {
+        this.revealRoundResults(roomId);
+      }
+    }
   }
 
   private revealRoundResults(roomId: string) {
@@ -296,20 +328,6 @@ export class GameLoopService {
 
     const isCorrect = GameRulesEngine.isCorrectGuess(guess, room.currentWord || '');
 
-    if (isCorrect) {
-      const score = GameRulesEngine.calculateModeBScoreGain(
-        room.timeLeft,
-        room.settings?.drawTimeLimit || 60,
-      );
-      guesser.score += score;
-
-      room.players.forEach((p) => {
-        if (p.id !== guesser.id) {
-          p.score += 100;
-        }
-      });
-    }
-
     this.roomRepository.save(targetRoomId, room);
 
     const chatMsg = {
@@ -330,6 +348,64 @@ export class GameLoopService {
     this.revealRoundResults(room.roomId);
 
     return { isCorrect, chatMsg };
+  }
+
+  savePlayerStroke(roomId: string, socketId: string, stroke: any): void {
+    const targetRoomId = roomId.toUpperCase();
+    const room = this.roomRepository.get(targetRoomId);
+    if (!room) return;
+
+    const player = room.players.find((p) => p.id === socketId);
+    if (!player) return;
+
+    if (!player.drawingData) {
+      player.drawingData = [];
+    }
+    player.drawingData.push(stroke);
+    this.roomRepository.save(targetRoomId, room);
+  }
+
+  clearPlayerDrawing(roomId: string, socketId: string): void {
+    const targetRoomId = roomId.toUpperCase();
+    const room = this.roomRepository.get(targetRoomId);
+    if (!room) return;
+
+    const player = room.players.find((p) => p.id === socketId);
+    if (!player) return;
+
+    player.drawingData = [];
+    this.roomRepository.save(targetRoomId, room);
+  }
+
+  handlePlayerSubmitDrawing(
+    roomId: string,
+    socketId: string,
+    strokes: any[],
+  ): RoomState {
+    const targetRoomId = roomId.toUpperCase();
+    const room = this.roomRepository.get(targetRoomId);
+    if (!room) throw new NotFoundException('Room not found');
+
+    const player = room.players.find((p) => p.id === socketId);
+    if (!player) throw new NotFoundException('Player not found');
+
+    player.drawingData = strokes;
+    this.roomRepository.save(targetRoomId, room);
+
+    const mode = room.settings?.mode || 'A';
+    if (mode === 'B' && room.phase === 'PLAYING') {
+      const isDrawingTurn = (room.roundNumber ?? 1) < room.players.length;
+      if (isDrawingTurn && room.drawerId === socketId) {
+        const timer = this.roomTimers.get(room.roomId);
+        if (timer) {
+          clearInterval(timer.timer);
+          this.roomTimers.delete(room.roomId);
+        }
+        this.startNewRound(room.roomId);
+      }
+    }
+
+    return room;
   }
 
   cleanRoomTimer(roomId: string) {
