@@ -153,6 +153,31 @@ describe('LobbyService', () => {
       expect(updatedRoom!.players[0].id).toBe(joinerSocketId);
       expect(updatedRoom!.players[0].name).toBe('JoinerPlayer');
     });
+
+    it('should reset room to LOBBY if player count drops below 2 during active gameplay', () => {
+      const hostSocketId = 'socket-host-123';
+      const joinerSocketId = 'socket-joiner-456';
+
+      const room = service.createRoom('HostPlayer', 'avatar1.svg', mockSettings, hostSocketId);
+      service.joinRoom(room.roomId, 'JoinerPlayer', 'avatar2.svg', joinerSocketId);
+
+      room.phase = 'PLAYING';
+      room.roundNumber = 1;
+      room.drawerId = hostSocketId;
+
+      let timerCleared = false;
+      const affected = service.handlePlayerDisconnect(joinerSocketId, (id) => {
+        if (id === room.roomId) timerCleared = true;
+      });
+
+      expect(affected).toHaveLength(1);
+      const updated = affected[0].roomState;
+      expect(updated).toBeDefined();
+      expect(updated!.phase).toBe('LOBBY');
+      expect(updated!.roundNumber).toBe(0);
+      expect(updated!.drawerId).toBeNull();
+      expect(timerCleared).toBe(true);
+    });
   });
 
   describe('updateRoomSettings', () => {

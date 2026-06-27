@@ -8,6 +8,20 @@ export class GameRulesEngine {
   }
 
   /**
+   * Obfuscates the secret word, revealing specific character indexes as hints
+   */
+  static getObfuscatedWordWithHints(word: string, revealedIndexes: number[]): string {
+    if (!word) return '';
+    return word
+      .split('')
+      .map((char, index) => {
+        if (char === ' ') return ' ';
+        return revealedIndexes.includes(index) ? char : '_';
+      })
+      .join(' ');
+  }
+
+  /**
    * Calculates score gain for guesser in Mode A
    */
   static calculateScoreGain(timeLeft: number, drawTimeLimit: number): number {

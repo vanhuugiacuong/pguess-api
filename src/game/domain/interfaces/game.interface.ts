@@ -45,4 +45,8 @@ export interface RoomState {
   maxRounds?: number;
   settings?: GameSettings;
   hostId?: string;
+  finalGuess?: string | null;
+  finalGuessIsCorrect?: boolean;
+  revealedIndexes?: number[];
+  hintsRevealed?: number;
 }

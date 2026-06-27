@@ -2,16 +2,15 @@ import { Injectable, Inject, NotFoundException, BadRequestException } from '@nes
 import { RoomRepositoryToken } from '../storage/room.repository';
 import type { RoomRepository } from '../storage/room.repository';
 import { RoomState } from '../domain/interfaces/game.interface';
-import { GameRulesEngine } from '../domain/game-rules.engine';
-
-const WORD_BANK = [
-  'house', 'cat', 'tree', 'sun', 'car', 'flower', 'fish', 'cup', 'star', 'apple',
-  'boat', 'bird', 'cake', 'hat', 'cloud', 'heart', 'moon', 'ball', 'book', 'face'
-];
+import { WordHintService } from './word-hint.service';
+import { DrawingService } from './drawing.service';
+import { GameTimerService } from './game-timer.service';
+import { GameModeStrategy } from '../strategies/game-mode.strategy';
+import { ModeAStrategy } from '../strategies/mode-a.strategy';
+import { ModeBStrategy } from '../strategies/mode-b.strategy';
 
 @Injectable()
 export class GameLoopService {
-  private roomTimers = new Map<string, { timer: NodeJS.Timeout }>();
   private roomCallbacks = new Map<
     string,
     {
@@ -23,7 +22,16 @@ export class GameLoopService {
   constructor(
     @Inject(RoomRepositoryToken)
     private readonly roomRepository: RoomRepository,
+    private readonly wordHintService: WordHintService,
+    private readonly drawingService: DrawingService,
+    private readonly gameTimerService: GameTimerService,
+    private readonly modeAStrategy: ModeAStrategy,
+    private readonly modeBStrategy: ModeBStrategy,
   ) {}
+
+  private getStrategy(mode?: 'A' | 'B'): GameModeStrategy {
+    return mode === 'B' ? this.modeBStrategy : this.modeAStrategy;
+  }
 
   startGame(
     roomId: string,
@@ -34,11 +42,97 @@ export class GameLoopService {
     const room = this.roomRepository.get(targetRoomId);
     if (!room) throw new NotFoundException('Room not found');
 
+    if (room.players.length < 2) {
+      throw new BadRequestException('Cần tối thiểu 2 người chơi để bắt đầu game!');
+    }
+
     this.roomCallbacks.set(room.roomId, { onStateUpdate, onChatMessage });
-    room.roundNumber = 0;
+    room.roundNumber = 1;
     room.maxRounds = room.settings?.mode === 'A' ? room.players.length : room.players.length;
 
-    this.startNewRound(room.roomId);
+    room.players.forEach((p) => {
+      p.hasGuessedCorrectly = false;
+      p.isDrawing = false;
+      p.drawingData = undefined;
+    });
+
+    const strategy = this.getStrategy(room.settings?.mode);
+    strategy.setupRound(room);
+
+    this.roomRepository.save(room.roomId, room);
+    this.startCountdown(room.roomId);
+
+    // Broadcast system message
+    const cb = this.roomCallbacks.get(room.roomId);
+    if (cb && cb.onChatMessage) {
+      cb.onChatMessage({
+        id: `sys-round-start-${Date.now()}`,
+        playerId: 'system',
+        playerName: 'Hệ thống',
+        text: `Trò chơi bắt đầu! Đang trong giai đoạn chọn từ khóa.`,
+        timestamp: Date.now(),
+        isSystem: true,
+        isCorrectGuess: false,
+      });
+    }
+
+    return room;
+  }
+
+  selectWord(roomId: string, playerId: string, word: string): RoomState {
+    const targetRoomId = roomId.toUpperCase();
+    const room = this.roomRepository.get(targetRoomId);
+    if (!room) throw new NotFoundException('Room not found');
+
+    if (room.phase !== 'WORD_SELECTION') {
+      throw new BadRequestException('Hiện không trong giai đoạn chọn từ khóa!');
+    }
+
+    const mode = room.settings?.mode || 'A';
+    if (mode === 'A') {
+      if (room.drawerId !== playerId) {
+        throw new BadRequestException('Chỉ họa sĩ mới được chọn từ khóa!');
+      }
+    } else {
+      if (room.roundNumber !== 1) {
+        throw new BadRequestException('Chỉ được chọn từ khóa ở vòng 1!');
+      }
+      if (room.guesserId !== playerId) {
+        throw new BadRequestException('Chỉ người đoán mới được chọn từ khóa!');
+      }
+    }
+
+    room.currentWord = word.trim() || 'Từ khóa bí mật';
+    room.obfuscatedWord = this.wordHintService.obfuscate(room.currentWord);
+    room.timeLeft = room.settings?.drawTimeLimit || 60;
+    room.revealedIndexes = [];
+    room.hintsRevealed = 0;
+    room.phase = 'PLAYING'; // Transition to playing!
+    
+    this.roomRepository.save(targetRoomId, room);
+
+    // Broadcast system message about the word selected
+    const cb = this.roomCallbacks.get(targetRoomId);
+    if (cb) {
+      if (cb.onChatMessage) {
+        cb.onChatMessage({
+          id: `sys-word-sel-${Date.now()}`,
+          playerId: 'system',
+          playerName: 'Hệ thống',
+          text: mode === 'A'
+            ? `Họa sĩ đã chọn từ khóa có ${room.currentWord.length} chữ cái!`
+            : `Người đoán đã chọn từ khóa ban đầu cho chuỗi truyền tay!`,
+          timestamp: Date.now(),
+          isSystem: true,
+          isCorrectGuess: false,
+        });
+      }
+      cb.onStateUpdate(room);
+    }
+
+    // Restart countdown for drawing
+    this.startCountdown(targetRoomId);
+
     return room;
   }
 
@@ -58,43 +152,12 @@ export class GameLoopService {
     });
 
     const mode = room.settings?.mode || 'A';
-    if (mode === 'A') {
-      const randIndex = Math.floor(Math.random() * WORD_BANK.length);
-      room.currentWord = WORD_BANK[randIndex];
-      room.obfuscatedWord = GameRulesEngine.obfuscateWord(room.currentWord);
-
-      const drawerIndex = (room.roundNumber - 1) % room.players.length;
-      room.players[drawerIndex].isDrawing = true;
-      room.drawerId = room.players[drawerIndex].id;
-      room.guesserId = null;
-    } else {
-      if (room.roundNumber === 1) {
-        const randIndex = Math.floor(Math.random() * WORD_BANK.length);
-        room.currentWord = WORD_BANK[randIndex];
-        room.obfuscatedWord = GameRulesEngine.obfuscateWord(room.currentWord);
-
-        room.players.forEach((p) => {
-          p.drawingData = undefined;
-        });
-        room.guesserId = room.players[room.players.length - 1].id;
-      }
-
-      const isDrawingTurn = room.roundNumber < room.players.length;
-      if (isDrawingTurn) {
-        const activeDrawerIndex = room.roundNumber - 1;
-        const activeDrawer = room.players[activeDrawerIndex];
-        activeDrawer.isDrawing = true;
-        room.drawerId = activeDrawer.id;
-      } else {
-        room.drawerId = null;
-      }
-    }
-
-    room.phase = 'PLAYING';
-    room.timeLeft = room.settings?.drawTimeLimit || 60;
+    const strategy = this.getStrategy(mode);
+    strategy.setupRound(room);
 
     this.roomRepository.save(roomId, room);
-
+    
+    // Broadcast state update
     const cb = this.roomCallbacks.get(roomId);
     if (cb) {
       cb.onStateUpdate(room);
@@ -104,7 +167,7 @@ export class GameLoopService {
           playerId: 'system',
           playerName: 'Hệ thống',
           text: mode === 'A'
-            ? `Vòng ${room.roundNumber} bắt đầu. ${room.players.find((p) => p.id === room.drawerId)?.name} đang vẽ!`
+            ? `Vòng ${room.roundNumber} bắt đầu. Đang chọn từ khóa...`
             : room.roundNumber < room.players.length
               ? `Vòng ${room.roundNumber} bắt đầu. ${room.players.find((p) => p.id === room.drawerId)?.name} đang vẽ truyền tay!`
               : `Lượt đoán của ${room.players.find((p) => p.id === room.guesserId)?.name} đã bắt đầu!`,
@@ -119,59 +182,88 @@ export class GameLoopService {
   }
 
   private startCountdown(roomId: string) {
-    const existing = this.roomTimers.get(roomId);
-    if (existing) {
-      clearInterval(existing.timer);
-    }
+    const room = this.roomRepository.get(roomId);
+    if (!room) return;
 
-    const timer = setInterval(() => {
-      const room = this.roomRepository.get(roomId);
-      if (!room || room.phase !== 'PLAYING') {
-        clearInterval(timer);
-        this.roomTimers.delete(roomId);
-        return;
-      }
+    this.gameTimerService.startTimer(
+      roomId,
+      room.timeLeft,
+      (secondsLeft) => {
+        const currentRoom = this.roomRepository.get(roomId);
+        if (!currentRoom || (currentRoom.phase !== 'PLAYING' && currentRoom.phase !== 'WORD_SELECTION')) {
+          this.gameTimerService.stopTimer(roomId);
+          return;
+        }
 
-      if (room.timeLeft <= 1) {
-        clearInterval(timer);
-        this.roomTimers.delete(roomId);
-        this.handleTimeOver(roomId);
-      } else {
-        if (room.settings?.mode === 'A') {
-          const guessers = room.players.filter((p) => p.id !== room.drawerId);
+        const mode = currentRoom.settings?.mode || 'A';
+        if (mode === 'A' && currentRoom.phase === 'PLAYING' && currentRoom.currentWord) {
+          const guessers = currentRoom.players.filter((p) => p.id !== currentRoom.drawerId);
           const allGuessed = guessers.every((p) => p.hasGuessedCorrectly);
           if (allGuessed && guessers.length > 0) {
-            clearInterval(timer);
-            this.roomTimers.delete(roomId);
+            this.gameTimerService.stopTimer(roomId);
             this.revealRoundResults(roomId);
             return;
           }
         }
 
-        room.timeLeft--;
-        this.roomRepository.save(roomId, room);
-        const cb = this.roomCallbacks.get(roomId);
-        if (cb) cb.onStateUpdate(room);
-      }
-    }, 1000);
+        currentRoom.timeLeft = secondsLeft;
 
-    this.roomTimers.set(roomId, { timer });
+        // Custom tick operations (like Mode A hint reveals)
+        const strategy = this.getStrategy(mode);
+        strategy.handleTick(currentRoom);
+
+        this.roomRepository.save(roomId, currentRoom);
+        const cb = this.roomCallbacks.get(roomId);
+        if (cb) cb.onStateUpdate(currentRoom);
+      },
+      () => {
+        this.handleTimeOver(roomId);
+      }
+    );
   }
 
   private handleTimeOver(roomId: string) {
     const room = this.roomRepository.get(roomId);
     if (!room) return;
 
-    const mode = room.settings?.mode || 'A';
-    if (mode === 'A') {
-      this.revealRoundResults(roomId);
-    } else {
-      const isDrawingTurn = (room.roundNumber ?? 1) < room.players.length;
-      if (isDrawingTurn) {
-        this.startNewRound(roomId);
-      } else {
-        this.revealRoundResults(roomId);
+    // Check if word was not selected in time during selection phase
+    if (room.phase === 'WORD_SELECTION') {
+      room.currentWord = this.wordHintService.getRandomWord();
+      room.obfuscatedWord = this.wordHintService.obfuscate(room.currentWord);
+      room.timeLeft = room.settings?.drawTimeLimit || 60;
+      room.revealedIndexes = [];
+      room.hintsRevealed = 0;
+      room.phase = 'PLAYING';
+      this.roomRepository.save(roomId, room);
+
+      const cb = this.roomCallbacks.get(roomId);
+      if (cb) {
+        cb.onStateUpdate(room);
+        if (cb.onChatMessage) {
+          cb.onChatMessage({
+            id: `sys-word-timeout-${Date.now()}`,
+            playerId: 'system',
+            playerName: 'Hệ thống',
+            text: `Hết thời gian chọn từ khóa! Hệ thống tự động chọn từ ngẫu nhiên.`,
+            timestamp: Date.now(),
+            isSystem: true,
+            isCorrectGuess: false,
+          });
+        }
       }
+
+      this.startCountdown(roomId);
+      return;
+    }
+
+    const mode = room.settings?.mode || 'A';
+    const strategy = this.getStrategy(mode);
+    const action = strategy.handleTimeOver(room);
+
+    if (action === 'reveal') {
+      this.revealRoundResults(roomId);
+    } else if (action === 'next_round') {
+      this.startNewRound(roomId);
     }
   }
 
@@ -199,29 +291,24 @@ export class GameLoopService {
       }
     }
 
-    let revealTime = room.timeLeft;
-    const timer = setInterval(() => {
-      const currentRoom = this.roomRepository.get(roomId);
-      if (!currentRoom || currentRoom.phase !== 'REVEAL') {
-        clearInterval(timer);
-        this.roomTimers.delete(roomId);
-        return;
-      }
-
-      if (revealTime <= 1) {
-        clearInterval(timer);
-        this.roomTimers.delete(roomId);
-        this.startNewRound(roomId);
-      } else {
-        revealTime--;
-        currentRoom.timeLeft = revealTime;
+    this.gameTimerService.startTimer(
+      roomId,
+      room.timeLeft,
+      (secondsLeft) => {
+        const currentRoom = this.roomRepository.get(roomId);
+        if (!currentRoom || currentRoom.phase !== 'REVEAL') {
+          this.gameTimerService.stopTimer(roomId);
+          return;
+        }
+        currentRoom.timeLeft = secondsLeft;
         this.roomRepository.save(roomId, currentRoom);
         const cb = this.roomCallbacks.get(roomId);
         if (cb) cb.onStateUpdate(currentRoom);
+      },
+      () => {
+        this.startNewRound(roomId);
       }
-    }, 1000);
-
-    this.roomTimers.set(roomId, { timer });
+    );
   }
 
   private endGame(roomId: string) {
@@ -252,11 +339,7 @@ export class GameLoopService {
     }
 
     this.roomCallbacks.delete(roomId);
-    const timer = this.roomTimers.get(roomId);
-    if (timer) {
-      clearInterval(timer.timer);
-      this.roomTimers.delete(roomId);
-    }
+    this.gameTimerService.stopTimer(roomId);
   }
 
   handleChatMessage(
@@ -272,30 +355,31 @@ export class GameLoopService {
     if (!player) throw new NotFoundException('Player not found');
 
     let isCorrect = false;
-    const mode = room.settings?.mode || 'A';
+    let systemMsgText = '';
+    let shouldEndRoundEarly = false;
 
-    if (mode === 'A' && room.phase === 'PLAYING') {
-      const isDrawer = room.drawerId === socketId;
-      if (!isDrawer && !player.hasGuessedCorrectly && room.currentWord) {
-        if (GameRulesEngine.isCorrectGuess(text, room.currentWord)) {
-          isCorrect = true;
-          player.hasGuessedCorrectly = true;
+    if (room.phase === 'PLAYING') {
+      const mode = room.settings?.mode || 'A';
+      const strategy = this.getStrategy(mode);
+      
+      const result = strategy.handleGuess(room, player, text);
+      isCorrect = result.isCorrect;
+      if (result.systemMessage) {
+        systemMsgText = result.systemMessage;
+      }
+      if (result.shouldEndRoundEarly) {
+        shouldEndRoundEarly = true;
+      }
+    }
 
-          const scoreGain = GameRulesEngine.calculateScoreGain(
-            room.timeLeft,
-            room.settings?.drawTimeLimit || 60,
-          );
-          player.score += scoreGain;
+    if (isCorrect) {
+      this.roomRepository.save(targetRoomId, room);
+      const cb = this.roomCallbacks.get(room.roomId);
+      if (cb) cb.onStateUpdate(room);
 
-          const drawer = room.players.find((p) => p.id === room.drawerId);
-          if (drawer) {
-            drawer.score += 30;
-          }
-
-          this.roomRepository.save(targetRoomId, room);
-          const cb = this.roomCallbacks.get(room.roomId);
-          if (cb) cb.onStateUpdate(room);
-        }
+      if (shouldEndRoundEarly) {
+        this.gameTimerService.stopTimer(room.roomId);
+        this.revealRoundResults(room.roomId);
       }
     }
 
@@ -303,7 +387,7 @@ export class GameLoopService {
       id: `msg-${Date.now()}-${Math.random()}`,
       playerId: socketId,
       playerName: player.name,
-      text: isCorrect ? 'đã đoán chính xác từ khóa! 🎉' : text,
+      text: isCorrect ? (systemMsgText || 'đã đoán chính xác từ khóa! 🎉') : text,
       timestamp: Date.now(),
       isSystem: isCorrect,
       isCorrectGuess: isCorrect,
@@ -321,60 +405,27 @@ export class GameLoopService {
     const room = this.roomRepository.get(targetRoomId);
     if (!room) throw new NotFoundException('Room not found');
 
-    const guesser = room.players.find((p) => p.id === socketId);
-    if (!guesser || room.guesserId !== socketId || room.phase !== 'PLAYING') {
+    if (room.phase !== 'PLAYING') {
       throw new BadRequestException('Not allowed to guess');
     }
 
-    const isCorrect = GameRulesEngine.isCorrectGuess(guess, room.currentWord || '');
-
+    const result = this.modeBStrategy.handleModeBGuess(room, socketId, guess);
     this.roomRepository.save(targetRoomId, room);
 
     const chatMsg = {
       id: `msg-${Date.now()}`,
       playerId: socketId,
-      playerName: guesser.name,
-      text: `đã đoán: "${guess}" - ${isCorrect ? 'CHÍNH XÁC! 🎉' : 'SAI RỒI ❌'}`,
+      playerName: room.players.find((p) => p.id === socketId)?.name || 'Người đoán',
+      text: result.systemMessage || `đã đoán: "${guess}"`,
       timestamp: Date.now(),
       isSystem: true,
-      isCorrectGuess: isCorrect,
+      isCorrectGuess: result.isCorrect,
     };
 
-    const timer = this.roomTimers.get(room.roomId);
-    if (timer) {
-      clearInterval(timer.timer);
-      this.roomTimers.delete(room.roomId);
-    }
+    this.gameTimerService.stopTimer(room.roomId);
     this.revealRoundResults(room.roomId);
 
-    return { isCorrect, chatMsg };
-  }
-
-  savePlayerStroke(roomId: string, socketId: string, stroke: any): void {
-    const targetRoomId = roomId.toUpperCase();
-    const room = this.roomRepository.get(targetRoomId);
-    if (!room) return;
-
-    const player = room.players.find((p) => p.id === socketId);
-    if (!player) return;
-
-    if (!player.drawingData) {
-      player.drawingData = [];
-    }
-    player.drawingData.push(stroke);
-    this.roomRepository.save(targetRoomId, room);
-  }
-
-  clearPlayerDrawing(roomId: string, socketId: string): void {
-    const targetRoomId = roomId.toUpperCase();
-    const room = this.roomRepository.get(targetRoomId);
-    if (!room) return;
-
-    const player = room.players.find((p) => p.id === socketId);
-    if (!player) return;
-
-    player.drawingData = [];
-    this.roomRepository.save(targetRoomId, room);
+    return { isCorrect: result.isCorrect, chatMsg };
   }
 
   handlePlayerSubmitDrawing(
@@ -393,27 +444,19 @@ export class GameLoopService {
     this.roomRepository.save(targetRoomId, room);
 
     const mode = room.settings?.mode || 'A';
-    if (mode === 'B' && room.phase === 'PLAYING') {
-      const isDrawingTurn = (room.roundNumber ?? 1) < room.players.length;
-      if (isDrawingTurn && room.drawerId === socketId) {
-        const timer = this.roomTimers.get(room.roomId);
-        if (timer) {
-          clearInterval(timer.timer);
-          this.roomTimers.delete(room.roomId);
-        }
-        this.startNewRound(room.roomId);
-      }
+    const strategy = this.getStrategy(mode);
+    const result = strategy.handleSubmitDrawing(room, socketId, strokes);
+
+    if (result.shouldEndRoundEarly) {
+      this.gameTimerService.stopTimer(room.roomId);
+      this.startNewRound(room.roomId);
     }
 
     return room;
   }
 
   cleanRoomTimer(roomId: string) {
-    const timer = this.roomTimers.get(roomId);
-    if (timer) {
-      clearInterval(timer.timer);
-      this.roomTimers.delete(roomId);
-    }
+    this.gameTimerService.stopTimer(roomId);
     this.roomCallbacks.delete(roomId);
   }
 }

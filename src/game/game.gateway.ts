@@ -11,7 +11,10 @@ import { Server, Socket } from 'socket.io';
 import { LobbyService } from './services/lobby.service';
 import { GameLoopService } from './services/game-loop.service';
 import { GameSettings } from './domain/interfaces/game.interface';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
+import { RoomRepositoryToken } from './storage/room.repository';
+import type { RoomRepository } from './storage/room.repository';
+import { DrawingService } from './services/drawing.service';
 
 @WebSocketGateway({
   cors: {
@@ -27,6 +30,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private readonly lobbyService: LobbyService,
     private readonly gameLoopService: GameLoopService,
+    private readonly drawingService: DrawingService,
+    @Inject(RoomRepositoryToken)
+    private readonly roomRepository: RoomRepository,
   ) {}
 
   /**
@@ -175,13 +181,37 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('select_word')
+  handleSelectWord(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; word: string },
+  ) {
+    this.logger.log(`select_word event from ${client.id} in room ${data.roomId} with word: ${data.word}`);
+    try {
+      const roomState = this.gameLoopService.selectWord(
+        data.roomId,
+        client.id,
+        data.word,
+      );
+      this.server.to(roomState.roomId).emit('room_state_updated', roomState);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`Error selecting word: ${error.message}`);
+      return { error: error.message };
+    }
+  }
+
   @SubscribeMessage('draw_stroke')
   handleDrawStroke(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { roomId: string; stroke: any },
   ) {
     client.to(data.roomId.toUpperCase()).emit('drawing_stream', data.stroke);
-    this.gameLoopService.savePlayerStroke(data.roomId, client.id, data.stroke);
+    const room = this.roomRepository.get(data.roomId.toUpperCase());
+    if (room) {
+      this.drawingService.savePlayerStroke(room, client.id, data.stroke);
+      this.roomRepository.save(room.roomId, room);
+    }
   }
 
   @SubscribeMessage('clear_canvas')
@@ -190,7 +220,11 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { roomId: string },
   ) {
     client.to(data.roomId.toUpperCase()).emit('clear_drawing');
-    this.gameLoopService.clearPlayerDrawing(data.roomId, client.id);
+    const room = this.roomRepository.get(data.roomId.toUpperCase());
+    if (room) {
+      this.drawingService.clearPlayerDrawing(room, client.id);
+      this.roomRepository.save(room.roomId, room);
+    }
   }
 
   @SubscribeMessage('submit_drawing')

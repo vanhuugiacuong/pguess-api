@@ -177,6 +177,19 @@ export class LobbyService {
           if (roomState.hostId === socketId) {
             roomState.hostId = roomState.players[0].id;
           }
+
+          if (roomState.phase !== 'LOBBY' && roomState.players.length < 2) {
+            roomState.phase = 'LOBBY';
+            roomState.roundNumber = 0;
+            roomState.drawerId = null;
+            roomState.guesserId = null;
+            roomState.currentTurnPlayerId = null;
+            roomState.currentWord = null;
+            roomState.obfuscatedWord = null;
+            roomState.timeLeft = roomState.settings?.drawTimeLimit || 60;
+            onRoomDeleted(roomState.roomId); // Clear active gameplay timers
+          }
+
           this.roomRepository.save(roomState.roomId, roomState);
           affectedRooms.push({ roomId: roomState.roomId, roomState });
         }
