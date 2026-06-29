@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { GameModeStrategy } from './game-mode.strategy';
 import { RoomState, Player } from '../domain/interfaces/game.interface';
 import { WordHintService } from '../services/word-hint.service';
 import { GameRulesEngine } from '../domain/game-rules.engine';
+
 
 @Injectable()
 export class ModeAStrategy implements GameModeStrategy {
@@ -103,5 +104,26 @@ export class ModeAStrategy implements GameModeStrategy {
     }
 
     return { isCorrect: false };
+  }
+
+  validateSelectWord(room: RoomState, playerId: string): void {
+    if (room.drawerId !== playerId) {
+      throw new BadRequestException('Chỉ họa sĩ mới được chọn từ khóa!');
+    }
+  }
+
+  getWordSelectionMessage(room: RoomState): string {
+    return `Họa sĩ đã chọn từ khóa có ${room.currentWord?.length || 0} chữ cái!`;
+  }
+
+  getNewRoundMessage(room: RoomState): string {
+    return `Vòng ${room.roundNumber} bắt đầu. Đang chọn từ khóa...`;
+  }
+
+  checkEarlyRoundEnd(room: RoomState): boolean {
+    if (!room.currentWord) return false;
+    const guessers = room.players.filter((p) => p.id !== room.drawerId);
+    const allGuessed = guessers.every((p) => p.hasGuessedCorrectly);
+    return allGuessed && guessers.length > 0;
   }
 }

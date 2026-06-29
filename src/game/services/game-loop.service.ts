@@ -7,7 +7,6 @@ import {
 import { RoomRepositoryToken } from '../storage/room.repository';
 import type { RoomRepository } from '../storage/room.repository';
 import { RoomState } from '../domain/interfaces/game.interface';
-import { GameRulesEngine } from '../domain/game-rules.engine';
 import { WordHintService } from './word-hint.service';
 import { DrawingService } from './drawing.service';
 import { GameTimerService } from './game-timer.service';
@@ -15,146 +14,6 @@ import { ModeAStrategy } from '../strategies/mode-a.strategy';
 import { ModeBStrategy } from '../strategies/mode-b.strategy';
 import { GameModeStrategy } from '../strategies/game-mode.strategy';
 
-const WORD_BANKS: Record<string, string[]> = {
-  general: [
-    'house',
-    'cat',
-    'tree',
-    'sun',
-    'car',
-    'flower',
-    'fish',
-    'cup',
-    'star',
-    'apple',
-    'boat',
-    'bird',
-    'cake',
-    'hat',
-    'cloud',
-    'heart',
-    'moon',
-    'ball',
-    'book',
-    'face',
-  ],
-  animals: [
-    'dog',
-    'cat',
-    'lion',
-    'tiger',
-    'elephant',
-    'giraffe',
-    'zebra',
-    'panda',
-    'rabbit',
-    'monkey',
-    'penguin',
-    'fox',
-    'bear',
-    'frog',
-    'horse',
-    'sheep',
-    'duck',
-    'whale',
-    'owl',
-    'chicken',
-  ],
-  car_brands: [
-    'toyota',
-    'honda',
-    'bmw',
-    'audi',
-    'mercedes',
-    'ford',
-    'tesla',
-    'porsche',
-    'kia',
-    'volkswagen',
-    'mazda',
-    'nissan',
-    'hyundai',
-    'volvo',
-    'lexus',
-    'chevrolet',
-    'jeep',
-    'subaru',
-    'bugatti',
-    'ferrari',
-  ],
-  clothes: [
-    'shirt',
-    't-shirt',
-    'hoodie',
-    'jacket',
-    'coat',
-    'dress',
-    'skirt',
-    'jeans',
-    'pants',
-    'shorts',
-    'sneakers',
-    'boots',
-    'hat',
-    'cap',
-    'scarf',
-    'gloves',
-    'sock',
-    'uniform',
-    'suit',
-    'tie',
-  ],
-  food: [
-    'pizza',
-    'burger',
-    'noodles',
-    'sandwich',
-    'sushi',
-    'cake',
-    'ice cream',
-    'salad',
-    'ramen',
-    'taco',
-    'apple pie',
-    'hotdog',
-    'pasta',
-    'bread',
-    'dumplings',
-    'milk tea',
-    'chocolate',
-    'steak',
-    'donut',
-    'curry',
-  ],
-};
-
-const CATEGORY_ALIASES: Record<string, string> = {
-  general: 'general',
-  default: 'general',
-  'thong thuong': 'general',
-  'thông thường': 'general',
-  'co ban': 'general',
-  'cơ bản': 'general',
-  animals: 'animals',
-  animal: 'animals',
-  'dong vat': 'animals',
-  'động vật': 'animals',
-  'car brands': 'car_brands',
-  carbrands: 'car_brands',
-  cars: 'car_brands',
-  car: 'car_brands',
-  xe: 'car_brands',
-  'thuong hieu xe': 'car_brands',
-  'thương hiệu xe': 'car_brands',
-  clothes: 'clothes',
-  clothing: 'clothes',
-  'quan ao': 'clothes',
-  'quần áo': 'clothes',
-  food: 'food',
-  foods: 'food',
-  'do an': 'food',
-  'đồ ăn': 'food',
-};
 
 @Injectable()
 export class GameLoopService {
@@ -197,8 +56,7 @@ export class GameLoopService {
 
     this.roomCallbacks.set(room.roomId, { onStateUpdate, onChatMessage });
     room.roundNumber = 1;
-    room.maxRounds =
-      room.settings?.mode === 'A' ? room.players.length : room.players.length;
+    room.maxRounds = room.players.length;
 
     room.players.forEach((p) => {
       p.hasGuessedCorrectly = false;
@@ -238,19 +96,8 @@ export class GameLoopService {
       throw new BadRequestException('Hiện không trong giai đoạn chọn từ khóa!');
     }
 
-    const mode = room.settings?.mode || 'A';
-    if (mode === 'A') {
-      if (room.drawerId !== playerId) {
-        throw new BadRequestException('Chỉ họa sĩ mới được chọn từ khóa!');
-      }
-    } else {
-      if (room.roundNumber !== 1) {
-        throw new BadRequestException('Chỉ được chọn từ khóa ở vòng 1!');
-      }
-      if (room.guesserId !== playerId) {
-        throw new BadRequestException('Chỉ người đoán mới được chọn từ khóa!');
-      }
-    }
+    const strategy = this.getStrategy(room.settings?.mode);
+    strategy.validateSelectWord(room, playerId);
 
     room.currentWord = word.trim() || 'Từ khóa bí mật';
     room.obfuscatedWord = this.wordHintService.obfuscate(room.currentWord);
@@ -269,10 +116,7 @@ export class GameLoopService {
           id: `sys-word-sel-${Date.now()}`,
           playerId: 'system',
           playerName: 'Hệ thống',
-          text:
-            mode === 'A'
-              ? `Họa sĩ đã chọn từ khóa có ${room.currentWord.length} chữ cái!`
-              : `Người đoán đã chọn từ khóa ban đầu cho chuỗi truyền tay!`,
+          text: strategy.getWordSelectionMessage(room),
           timestamp: Date.now(),
           isSystem: true,
           isCorrectGuess: false,
@@ -302,13 +146,13 @@ export class GameLoopService {
       p.isDrawing = false;
     });
 
-    const wordBank = this.getWordBank(
+    const wordBank = this.wordHintService.getWordBank(
       room.settings?.wordCategory,
       room.settings?.customWordBank,
     );
     const randIndex = Math.floor(Math.random() * wordBank.length);
     room.currentWord = wordBank[randIndex];
-    room.obfuscatedWord = GameRulesEngine.obfuscateWord(room.currentWord);
+    room.obfuscatedWord = this.wordHintService.obfuscate(room.currentWord);
 
     const mode = room.settings?.mode || 'A';
     const strategy = this.getStrategy(mode);
@@ -325,12 +169,7 @@ export class GameLoopService {
           id: `sys-round-${room.roundNumber}-${Date.now()}`,
           playerId: 'system',
           playerName: 'Hệ thống',
-          text:
-            mode === 'A'
-              ? `Vòng ${room.roundNumber} bắt đầu. Đang chọn từ khóa...`
-              : room.roundNumber < room.players.length
-                ? `Vòng ${room.roundNumber} bắt đầu. ${room.players.find((p) => p.id === room.drawerId)?.name} đang vẽ truyền tay!`
-                : `Lượt đoán của ${room.players.find((p) => p.id === room.guesserId)?.name} đã bắt đầu!`,
+          text: strategy.getNewRoundMessage(room),
           timestamp: Date.now(),
           isSystem: true,
           isCorrectGuess: false,
@@ -360,26 +199,16 @@ export class GameLoopService {
         }
 
         const mode = currentRoom.settings?.mode || 'A';
-        if (
-          mode === 'A' &&
-          currentRoom.phase === 'PLAYING' &&
-          currentRoom.currentWord
-        ) {
-          const guessers = currentRoom.players.filter(
-            (p) => p.id !== currentRoom.drawerId,
-          );
-          const allGuessed = guessers.every((p) => p.hasGuessedCorrectly);
-          if (allGuessed && guessers.length > 0) {
-            this.gameTimerService.stopTimer(roomId);
-            this.revealRoundResults(roomId);
-            return;
-          }
+        const strategy = this.getStrategy(mode);
+        if (currentRoom.phase === 'PLAYING' && strategy.checkEarlyRoundEnd(currentRoom)) {
+          this.gameTimerService.stopTimer(roomId);
+          this.revealRoundResults(roomId);
+          return;
         }
 
         currentRoom.timeLeft = secondsLeft;
 
         // Custom tick operations (like Mode A hint reveals)
-        const strategy = this.getStrategy(mode);
         strategy.handleTick(currentRoom);
 
         this.roomRepository.save(roomId, currentRoom);
@@ -651,28 +480,5 @@ export class GameLoopService {
     this.roomCallbacks.delete(roomId);
   }
 
-  private getWordBank(
-    wordCategory?: string,
-    customWordBank?: string[],
-  ): string[] {
-    const customWords = (customWordBank || [])
-      .map((word) => word.trim())
-      .filter((word) => word.length > 0);
 
-    if (customWords.length > 0) {
-      return customWords;
-    }
-
-    const normalizedCategory = this.normalizeWordCategory(wordCategory);
-    return WORD_BANKS[normalizedCategory] || WORD_BANKS.general;
-  }
-
-  private normalizeWordCategory(wordCategory?: string): string {
-    if (!wordCategory) {
-      return 'general';
-    }
-
-    const normalized = wordCategory.trim().toLowerCase();
-    return CATEGORY_ALIASES[normalized] || normalized;
-  }
 }

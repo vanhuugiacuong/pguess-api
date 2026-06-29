@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { GameModeStrategy } from './game-mode.strategy';
 import { RoomState, Player } from '../domain/interfaces/game.interface';
 import { GameRulesEngine } from '../domain/game-rules.engine';
+
 
 @Injectable()
 export class ModeBStrategy implements GameModeStrategy {
@@ -83,5 +84,32 @@ export class ModeBStrategy implements GameModeStrategy {
     const systemMessage = `đã đoán: "${guess}" - ${isCorrect ? 'CHÍNH XÁC! 🎉' : 'SAI RỒI ❌'}`;
 
     return { isCorrect, systemMessage };
+  }
+
+  validateSelectWord(room: RoomState, playerId: string): void {
+    if (room.roundNumber !== 1) {
+      throw new BadRequestException('Chỉ được chọn từ khóa ở vòng 1!');
+    }
+    if (room.guesserId !== playerId) {
+      throw new BadRequestException('Chỉ người đoán mới được chọn từ khóa!');
+    }
+  }
+
+  getWordSelectionMessage(room: RoomState): string {
+    return 'Người đoán đã chọn từ khóa ban đầu cho chuỗi truyền tay!';
+  }
+
+  getNewRoundMessage(room: RoomState): string {
+    if ((room.roundNumber || 0) < room.players.length) {
+      const activeDrawer = room.players.find((p) => p.id === room.drawerId);
+      return `Vòng ${room.roundNumber} bắt đầu. ${activeDrawer?.name || 'Họa sĩ'} đang vẽ truyền tay!`;
+    } else {
+      const guesser = room.players.find((p) => p.id === room.guesserId);
+      return `Lượt đoán của ${guesser?.name || 'Người đoán'} đã bắt đầu!`;
+    }
+  }
+
+  checkEarlyRoundEnd(room: RoomState): boolean {
+    return false;
   }
 }

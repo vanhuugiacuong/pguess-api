@@ -22,4 +22,16 @@ export interface GameModeStrategy {
 
   /** Custom guess submission for Mode B final guesser */
   handleModeBGuess?(room: RoomState, socketId: string, guess: string): { isCorrect: boolean; systemMessage?: string };
+
+  /** Validates if the player is allowed to select a word in the current phase and role */
+  validateSelectWord(room: RoomState, playerId: string): void;
+
+  /** Get system message to broadcast when a word has been selected */
+  getWordSelectionMessage(room: RoomState): string;
+
+  /** Get system message to broadcast when a new round starts */
+  getNewRoundMessage(room: RoomState): string;
+
+  /** Check if the playing phase should end early (e.g. all guessers guessed correctly in Mode A) */
+  checkEarlyRoundEnd(room: RoomState): boolean;
 }
