@@ -50,4 +50,5 @@ export interface RoomState {
   finalGuessIsCorrect?: boolean;
   revealedIndexes?: number[];
   hintsRevealed?: number;
+  hostIp?: string;
 }

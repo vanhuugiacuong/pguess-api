@@ -2,6 +2,19 @@ import { Injectable, Inject, NotFoundException, BadRequestException } from '@nes
 import { GameSettings, Player, RoomState } from '../domain/interfaces/game.interface';
 import { RoomRepositoryToken } from '../storage/room.repository';
 import type { RoomRepository } from '../storage/room.repository';
+import * as os from 'os';
+
+function getLocalIp(): string {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const net of interfaces[name] || []) {
+      if (net.family === 'IPv4' && !net.internal) {
+        return net.address;
+      }
+    }
+  }
+  return 'localhost';
+}
 
 @Injectable()
 export class LobbyService {
@@ -77,6 +90,7 @@ export class LobbyService {
         maxPlayers: this.validateMaxPlayers(settings.maxPlayers),
       },
       hostId: hostSocketId,
+      hostIp: getLocalIp(),
     };
 
     this.roomRepository.save(roomId, roomState);
