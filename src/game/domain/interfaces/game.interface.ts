@@ -6,6 +6,7 @@ export interface Player {
   isDrawing: boolean;
   hasGuessedCorrectly: boolean;
   avatar?: string;
+  drawingData?: any[];
 }
 
 export interface GameSettings {
@@ -14,6 +15,8 @@ export interface GameSettings {
   revealTimeLimit: number; // in seconds
   botCount: number;
   wordCategory: string;
+  customWordBank?: string[];
+  maxPlayers?: number;
 }
 
 export interface DrawPoint {
@@ -35,6 +38,16 @@ export interface RoomState {
   phase: 'LOBBY' | 'WORD_SELECTION' | 'PLAYING' | 'REVEAL' | 'GAME_OVER';
   currentTurnPlayerId: string | null;
   guesserId: string | null;
+  drawerId?: string | null;
   currentWord: string | null;
+  obfuscatedWord?: string | null;
   timeLeft: number;
+  roundNumber?: number;
+  maxRounds?: number;
+  settings?: GameSettings;
+  hostId?: string;
+  finalGuess?: string | null;
+  finalGuessIsCorrect?: boolean;
+  revealedIndexes?: number[];
+  hintsRevealed?: number;
 }
