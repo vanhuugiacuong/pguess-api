@@ -14,6 +14,7 @@ export interface GameSettings {
   revealTimeLimit: number; // in seconds
   botCount: number;
   wordCategory: string;
+  customWordBank?: string[];
   maxPlayers?: number;
 }
 
