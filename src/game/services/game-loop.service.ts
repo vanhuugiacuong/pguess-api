@@ -431,10 +431,30 @@ export class GameLoopService {
     const action = strategy.handleTimeOver(room);
 
     if (action === 'reveal') {
-      this.revealRoundResults(roomId);
+      this.delayRevealRoundResults(roomId, 4000);
     } else if (action === 'next_round') {
       this.startNewRound(roomId);
     }
+  }
+
+  private delayRevealRoundResults(roomId: string, delayMs: number = 4000) {
+    const room = this.roomRepository.get(roomId);
+    if (room) {
+      room.timeLeft = 0;
+      if (room.currentWord) {
+        room.obfuscatedWord = room.currentWord;
+      }
+      this.roomRepository.save(roomId, room);
+      const cb = this.roomCallbacks.get(roomId);
+      if (cb) cb.onStateUpdate(room);
+    }
+
+    setTimeout(() => {
+      const currentRoom = this.roomRepository.get(roomId);
+      if (currentRoom && currentRoom.phase === 'PLAYING') {
+        this.revealRoundResults(roomId);
+      }
+    }, delayMs);
   }
 
   private revealRoundResults(roomId: string) {
@@ -528,7 +548,7 @@ export class GameLoopService {
     let systemMsgText = '';
     let shouldEndRoundEarly = false;
 
-    if (room.phase === 'PLAYING') {
+    if (room.phase === 'PLAYING' && room.timeLeft > 0) {
       const mode = room.settings?.mode || 'A';
       const strategy = this.getStrategy(mode);
 
@@ -549,7 +569,7 @@ export class GameLoopService {
 
       if (shouldEndRoundEarly) {
         this.gameTimerService.stopTimer(room.roomId);
-        this.revealRoundResults(room.roomId);
+        this.delayRevealRoundResults(room.roomId, 4000);
       }
     }
 
@@ -594,7 +614,7 @@ export class GameLoopService {
     };
 
     this.gameTimerService.stopTimer(room.roomId);
-    this.revealRoundResults(room.roomId);
+    this.delayRevealRoundResults(room.roomId, 4000);
 
     return { isCorrect: result.isCorrect, chatMsg };
   }

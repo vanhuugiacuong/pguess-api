@@ -315,4 +315,21 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return { error: error.message };
     }
   }
+
+  @SubscribeMessage('return_to_lobby')
+  handleReturnToLobby(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string },
+  ) {
+    this.logger.log(`return_to_lobby event from ${client.id} for room ${data.roomId}`);
+    try {
+      this.gameLoopService.cleanRoomTimer(data.roomId);
+      const roomState = this.lobbyService.returnToLobby(data.roomId, client.id);
+      this.server.to(roomState.roomId).emit('room_state_updated', roomState);
+      return roomState;
+    } catch (error) {
+      this.logger.error(`Error returning to lobby: ${error.message}`);
+      return { error: error.message };
+    }
+  }
 }

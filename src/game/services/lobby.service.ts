@@ -2,19 +2,6 @@ import { Injectable, Inject, NotFoundException, BadRequestException } from '@nes
 import { GameSettings, Player, RoomState } from '../domain/interfaces/game.interface';
 import { RoomRepositoryToken } from '../storage/room.repository';
 import type { RoomRepository } from '../storage/room.repository';
-import * as os from 'os';
-
-function getLocalIp(): string {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const net of interfaces[name] || []) {
-      if (net.family === 'IPv4' && !net.internal) {
-        return net.address;
-      }
-    }
-  }
-  return 'localhost';
-}
 
 @Injectable()
 export class LobbyService {
@@ -90,7 +77,6 @@ export class LobbyService {
         maxPlayers: this.validateMaxPlayers(settings.maxPlayers),
       },
       hostId: hostSocketId,
-      hostIp: getLocalIp(),
     };
 
     this.roomRepository.save(roomId, roomState);
@@ -211,5 +197,35 @@ export class LobbyService {
     }
 
     return affectedRooms;
+  }
+
+  returnToLobby(roomId: string, hostSocketId: string): RoomState {
+    const targetRoomId = roomId.toUpperCase();
+    const room = this.roomRepository.get(targetRoomId);
+    if (!room) throw new NotFoundException('Room not found');
+    if (room.hostId !== hostSocketId) {
+      throw new BadRequestException('Only the host can return the room to the lobby');
+    }
+
+    room.phase = 'LOBBY';
+    room.roundNumber = 0;
+    room.maxRounds = room.settings?.mode === 'A' ? 1 : 3;
+    room.currentWord = null;
+    room.obfuscatedWord = null;
+    room.timeLeft = room.settings?.drawTimeLimit || 60;
+    room.finalGuess = null;
+    room.finalGuessIsCorrect = undefined;
+    room.revealedIndexes = [];
+    room.hintsRevealed = 0;
+
+    room.players.forEach((p) => {
+      p.score = 0;
+      p.isDrawing = false;
+      p.hasGuessedCorrectly = false;
+      p.drawingData = undefined;
+    });
+
+    this.roomRepository.save(targetRoomId, room);
+    return room;
   }
 }
