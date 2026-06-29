@@ -2,12 +2,58 @@ import { Injectable, Inject, NotFoundException, BadRequestException } from '@nes
 import { RoomRepositoryToken } from '../storage/room.repository';
 import type { RoomRepository } from '../storage/room.repository';
 import { RoomState } from '../domain/interfaces/game.interface';
-import { WordHintService } from './word-hint.service';
-import { DrawingService } from './drawing.service';
-import { GameTimerService } from './game-timer.service';
-import { GameModeStrategy } from '../strategies/game-mode.strategy';
-import { ModeAStrategy } from '../strategies/mode-a.strategy';
-import { ModeBStrategy } from '../strategies/mode-b.strategy';
+import { GameRulesEngine } from '../domain/game-rules.engine';
+
+const WORD_BANKS: Record<string, string[]> = {
+  general: [
+    'house', 'cat', 'tree', 'sun', 'car', 'flower', 'fish', 'cup', 'star', 'apple',
+    'boat', 'bird', 'cake', 'hat', 'cloud', 'heart', 'moon', 'ball', 'book', 'face',
+  ],
+  animals: [
+    'dog', 'cat', 'lion', 'tiger', 'elephant', 'giraffe', 'zebra', 'panda', 'rabbit', 'monkey',
+    'penguin', 'fox', 'bear', 'frog', 'horse', 'sheep', 'duck', 'whale', 'owl', 'chicken',
+  ],
+  car_brands: [
+    'toyota', 'honda', 'bmw', 'audi', 'mercedes', 'ford', 'tesla', 'porsche', 'kia', 'volkswagen',
+    'mazda', 'nissan', 'hyundai', 'volvo', 'lexus', 'chevrolet', 'jeep', 'subaru', 'bugatti', 'ferrari',
+  ],
+  clothes: [
+    'shirt', 't-shirt', 'hoodie', 'jacket', 'coat', 'dress', 'skirt', 'jeans', 'pants', 'shorts',
+    'sneakers', 'boots', 'hat', 'cap', 'scarf', 'gloves', 'sock', 'uniform', 'suit', 'tie',
+  ],
+  food: [
+    'pizza', 'burger', 'noodles', 'sandwich', 'sushi', 'cake', 'ice cream', 'salad', 'ramen', 'taco',
+    'apple pie', 'hotdog', 'pasta', 'bread', 'dumplings', 'milk tea', 'chocolate', 'steak', 'donut', 'curry',
+  ],
+};
+
+const CATEGORY_ALIASES: Record<string, string> = {
+  general: 'general',
+  default: 'general',
+  'thong thuong': 'general',
+  'thông thường': 'general',
+  'co ban': 'general',
+  'cơ bản': 'general',
+  animals: 'animals',
+  animal: 'animals',
+  'dong vat': 'animals',
+  'động vật': 'animals',
+  'car brands': 'car_brands',
+  carbrands: 'car_brands',
+  cars: 'car_brands',
+  car: 'car_brands',
+  xe: 'car_brands',
+  'thuong hieu xe': 'car_brands',
+  'thương hiệu xe': 'car_brands',
+  clothes: 'clothes',
+  clothing: 'clothes',
+  'quan ao': 'clothes',
+  'quần áo': 'clothes',
+  food: 'food',
+  foods: 'food',
+  'do an': 'food',
+  'đồ ăn': 'food',
+};
 
 @Injectable()
 export class GameLoopService {
@@ -150,6 +196,11 @@ export class GameLoopService {
       p.hasGuessedCorrectly = false;
       p.isDrawing = false;
     });
+
+    const wordBank = this.getWordBank(room.settings?.wordCategory, room.settings?.customWordBank);
+    const randIndex = Math.floor(Math.random() * wordBank.length);
+    room.currentWord = wordBank[randIndex];
+    room.obfuscatedWord = GameRulesEngine.obfuscateWord(room.currentWord);
 
     const mode = room.settings?.mode || 'A';
     const strategy = this.getStrategy(mode);
@@ -458,5 +509,27 @@ export class GameLoopService {
   cleanRoomTimer(roomId: string) {
     this.gameTimerService.stopTimer(roomId);
     this.roomCallbacks.delete(roomId);
+  }
+
+  private getWordBank(wordCategory?: string, customWordBank?: string[]): string[] {
+    const customWords = (customWordBank || [])
+      .map((word) => word.trim())
+      .filter((word) => word.length > 0);
+
+    if (customWords.length > 0) {
+      return customWords;
+    }
+
+    const normalizedCategory = this.normalizeWordCategory(wordCategory);
+    return WORD_BANKS[normalizedCategory] || WORD_BANKS.general;
+  }
+
+  private normalizeWordCategory(wordCategory?: string): string {
+    if (!wordCategory) {
+      return 'general';
+    }
+
+    const normalized = wordCategory.trim().toLowerCase();
+    return CATEGORY_ALIASES[normalized] || normalized;
   }
 }
