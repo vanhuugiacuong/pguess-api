@@ -1,29 +1,130 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { RoomRepositoryToken } from '../storage/room.repository';
 import type { RoomRepository } from '../storage/room.repository';
 import { RoomState } from '../domain/interfaces/game.interface';
 import { GameRulesEngine } from '../domain/game-rules.engine';
+import { WordHintService } from './word-hint.service';
+import { DrawingService } from './drawing.service';
+import { GameTimerService } from './game-timer.service';
+import { ModeAStrategy } from '../strategies/mode-a.strategy';
+import { ModeBStrategy } from '../strategies/mode-b.strategy';
+import { GameModeStrategy } from '../strategies/game-mode.strategy';
 
 const WORD_BANKS: Record<string, string[]> = {
   general: [
-    'house', 'cat', 'tree', 'sun', 'car', 'flower', 'fish', 'cup', 'star', 'apple',
-    'boat', 'bird', 'cake', 'hat', 'cloud', 'heart', 'moon', 'ball', 'book', 'face',
+    'house',
+    'cat',
+    'tree',
+    'sun',
+    'car',
+    'flower',
+    'fish',
+    'cup',
+    'star',
+    'apple',
+    'boat',
+    'bird',
+    'cake',
+    'hat',
+    'cloud',
+    'heart',
+    'moon',
+    'ball',
+    'book',
+    'face',
   ],
   animals: [
-    'dog', 'cat', 'lion', 'tiger', 'elephant', 'giraffe', 'zebra', 'panda', 'rabbit', 'monkey',
-    'penguin', 'fox', 'bear', 'frog', 'horse', 'sheep', 'duck', 'whale', 'owl', 'chicken',
+    'dog',
+    'cat',
+    'lion',
+    'tiger',
+    'elephant',
+    'giraffe',
+    'zebra',
+    'panda',
+    'rabbit',
+    'monkey',
+    'penguin',
+    'fox',
+    'bear',
+    'frog',
+    'horse',
+    'sheep',
+    'duck',
+    'whale',
+    'owl',
+    'chicken',
   ],
   car_brands: [
-    'toyota', 'honda', 'bmw', 'audi', 'mercedes', 'ford', 'tesla', 'porsche', 'kia', 'volkswagen',
-    'mazda', 'nissan', 'hyundai', 'volvo', 'lexus', 'chevrolet', 'jeep', 'subaru', 'bugatti', 'ferrari',
+    'toyota',
+    'honda',
+    'bmw',
+    'audi',
+    'mercedes',
+    'ford',
+    'tesla',
+    'porsche',
+    'kia',
+    'volkswagen',
+    'mazda',
+    'nissan',
+    'hyundai',
+    'volvo',
+    'lexus',
+    'chevrolet',
+    'jeep',
+    'subaru',
+    'bugatti',
+    'ferrari',
   ],
   clothes: [
-    'shirt', 't-shirt', 'hoodie', 'jacket', 'coat', 'dress', 'skirt', 'jeans', 'pants', 'shorts',
-    'sneakers', 'boots', 'hat', 'cap', 'scarf', 'gloves', 'sock', 'uniform', 'suit', 'tie',
+    'shirt',
+    't-shirt',
+    'hoodie',
+    'jacket',
+    'coat',
+    'dress',
+    'skirt',
+    'jeans',
+    'pants',
+    'shorts',
+    'sneakers',
+    'boots',
+    'hat',
+    'cap',
+    'scarf',
+    'gloves',
+    'sock',
+    'uniform',
+    'suit',
+    'tie',
   ],
   food: [
-    'pizza', 'burger', 'noodles', 'sandwich', 'sushi', 'cake', 'ice cream', 'salad', 'ramen', 'taco',
-    'apple pie', 'hotdog', 'pasta', 'bread', 'dumplings', 'milk tea', 'chocolate', 'steak', 'donut', 'curry',
+    'pizza',
+    'burger',
+    'noodles',
+    'sandwich',
+    'sushi',
+    'cake',
+    'ice cream',
+    'salad',
+    'ramen',
+    'taco',
+    'apple pie',
+    'hotdog',
+    'pasta',
+    'bread',
+    'dumplings',
+    'milk tea',
+    'chocolate',
+    'steak',
+    'donut',
+    'curry',
   ],
 };
 
@@ -89,12 +190,15 @@ export class GameLoopService {
     if (!room) throw new NotFoundException('Room not found');
 
     if (room.players.length < 2) {
-      throw new BadRequestException('Cần tối thiểu 2 người chơi để bắt đầu game!');
+      throw new BadRequestException(
+        'Cần tối thiểu 2 người chơi để bắt đầu game!',
+      );
     }
 
     this.roomCallbacks.set(room.roomId, { onStateUpdate, onChatMessage });
     room.roundNumber = 1;
-    room.maxRounds = room.settings?.mode === 'A' ? room.players.length : room.players.length;
+    room.maxRounds =
+      room.settings?.mode === 'A' ? room.players.length : room.players.length;
 
     room.players.forEach((p) => {
       p.hasGuessedCorrectly = false;
@@ -154,7 +258,7 @@ export class GameLoopService {
     room.revealedIndexes = [];
     room.hintsRevealed = 0;
     room.phase = 'PLAYING'; // Transition to playing!
-    
+
     this.roomRepository.save(targetRoomId, room);
 
     // Broadcast system message about the word selected
@@ -165,9 +269,10 @@ export class GameLoopService {
           id: `sys-word-sel-${Date.now()}`,
           playerId: 'system',
           playerName: 'Hệ thống',
-          text: mode === 'A'
-            ? `Họa sĩ đã chọn từ khóa có ${room.currentWord.length} chữ cái!`
-            : `Người đoán đã chọn từ khóa ban đầu cho chuỗi truyền tay!`,
+          text:
+            mode === 'A'
+              ? `Họa sĩ đã chọn từ khóa có ${room.currentWord.length} chữ cái!`
+              : `Người đoán đã chọn từ khóa ban đầu cho chuỗi truyền tay!`,
           timestamp: Date.now(),
           isSystem: true,
           isCorrectGuess: false,
@@ -197,7 +302,10 @@ export class GameLoopService {
       p.isDrawing = false;
     });
 
-    const wordBank = this.getWordBank(room.settings?.wordCategory, room.settings?.customWordBank);
+    const wordBank = this.getWordBank(
+      room.settings?.wordCategory,
+      room.settings?.customWordBank,
+    );
     const randIndex = Math.floor(Math.random() * wordBank.length);
     room.currentWord = wordBank[randIndex];
     room.obfuscatedWord = GameRulesEngine.obfuscateWord(room.currentWord);
@@ -207,7 +315,7 @@ export class GameLoopService {
     strategy.setupRound(room);
 
     this.roomRepository.save(roomId, room);
-    
+
     // Broadcast state update
     const cb = this.roomCallbacks.get(roomId);
     if (cb) {
@@ -217,11 +325,12 @@ export class GameLoopService {
           id: `sys-round-${room.roundNumber}-${Date.now()}`,
           playerId: 'system',
           playerName: 'Hệ thống',
-          text: mode === 'A'
-            ? `Vòng ${room.roundNumber} bắt đầu. Đang chọn từ khóa...`
-            : room.roundNumber < room.players.length
-              ? `Vòng ${room.roundNumber} bắt đầu. ${room.players.find((p) => p.id === room.drawerId)?.name} đang vẽ truyền tay!`
-              : `Lượt đoán của ${room.players.find((p) => p.id === room.guesserId)?.name} đã bắt đầu!`,
+          text:
+            mode === 'A'
+              ? `Vòng ${room.roundNumber} bắt đầu. Đang chọn từ khóa...`
+              : room.roundNumber < room.players.length
+                ? `Vòng ${room.roundNumber} bắt đầu. ${room.players.find((p) => p.id === room.drawerId)?.name} đang vẽ truyền tay!`
+                : `Lượt đoán của ${room.players.find((p) => p.id === room.guesserId)?.name} đã bắt đầu!`,
           timestamp: Date.now(),
           isSystem: true,
           isCorrectGuess: false,
@@ -241,14 +350,24 @@ export class GameLoopService {
       room.timeLeft,
       (secondsLeft) => {
         const currentRoom = this.roomRepository.get(roomId);
-        if (!currentRoom || (currentRoom.phase !== 'PLAYING' && currentRoom.phase !== 'WORD_SELECTION')) {
+        if (
+          !currentRoom ||
+          (currentRoom.phase !== 'PLAYING' &&
+            currentRoom.phase !== 'WORD_SELECTION')
+        ) {
           this.gameTimerService.stopTimer(roomId);
           return;
         }
 
         const mode = currentRoom.settings?.mode || 'A';
-        if (mode === 'A' && currentRoom.phase === 'PLAYING' && currentRoom.currentWord) {
-          const guessers = currentRoom.players.filter((p) => p.id !== currentRoom.drawerId);
+        if (
+          mode === 'A' &&
+          currentRoom.phase === 'PLAYING' &&
+          currentRoom.currentWord
+        ) {
+          const guessers = currentRoom.players.filter(
+            (p) => p.id !== currentRoom.drawerId,
+          );
           const allGuessed = guessers.every((p) => p.hasGuessedCorrectly);
           if (allGuessed && guessers.length > 0) {
             this.gameTimerService.stopTimer(roomId);
@@ -269,7 +388,7 @@ export class GameLoopService {
       },
       () => {
         this.handleTimeOver(roomId);
-      }
+      },
     );
   }
 
@@ -358,7 +477,7 @@ export class GameLoopService {
       },
       () => {
         this.startNewRound(roomId);
-      }
+      },
     );
   }
 
@@ -412,7 +531,7 @@ export class GameLoopService {
     if (room.phase === 'PLAYING') {
       const mode = room.settings?.mode || 'A';
       const strategy = this.getStrategy(mode);
-      
+
       const result = strategy.handleGuess(room, player, text);
       isCorrect = result.isCorrect;
       if (result.systemMessage) {
@@ -438,7 +557,7 @@ export class GameLoopService {
       id: `msg-${Date.now()}-${Math.random()}`,
       playerId: socketId,
       playerName: player.name,
-      text: isCorrect ? (systemMsgText || 'đã đoán chính xác từ khóa! 🎉') : text,
+      text: isCorrect ? systemMsgText || 'đã đoán chính xác từ khóa! 🎉' : text,
       timestamp: Date.now(),
       isSystem: isCorrect,
       isCorrectGuess: isCorrect,
@@ -466,7 +585,8 @@ export class GameLoopService {
     const chatMsg = {
       id: `msg-${Date.now()}`,
       playerId: socketId,
-      playerName: room.players.find((p) => p.id === socketId)?.name || 'Người đoán',
+      playerName:
+        room.players.find((p) => p.id === socketId)?.name || 'Người đoán',
       text: result.systemMessage || `đã đoán: "${guess}"`,
       timestamp: Date.now(),
       isSystem: true,
@@ -511,7 +631,10 @@ export class GameLoopService {
     this.roomCallbacks.delete(roomId);
   }
 
-  private getWordBank(wordCategory?: string, customWordBank?: string[]): string[] {
+  private getWordBank(
+    wordCategory?: string,
+    customWordBank?: string[],
+  ): string[] {
     const customWords = (customWordBank || [])
       .map((word) => word.trim())
       .filter((word) => word.length > 0);
