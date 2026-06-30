@@ -217,6 +217,7 @@ export class LobbyService {
     room.finalGuessIsCorrect = undefined;
     room.revealedIndexes = [];
     room.hintsRevealed = 0;
+    room.modeBChains = [];
 
     room.players.forEach((p) => {
       p.score = 0;
