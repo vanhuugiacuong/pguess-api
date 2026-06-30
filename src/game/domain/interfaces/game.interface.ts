@@ -7,6 +7,7 @@ export interface Player {
   hasGuessedCorrectly: boolean;
   avatar?: string;
   drawingData?: any[];
+  drawingWord?: string;
 }
 
 export interface GameSettings {
@@ -50,4 +51,24 @@ export interface RoomState {
   finalGuessIsCorrect?: boolean;
   revealedIndexes?: number[];
   hintsRevealed?: number;
+  modeBChains?: ModeBChain[];
+}
+
+export interface ModeBChainStep {
+  type: 'word' | 'drawing' | 'guess';
+  player: {
+    id: string;
+    name: string;
+    avatar?: string;
+  };
+  content: any; // string for word/guess, any[] for drawing
+  isCorrect?: boolean;
+  index?: number;
+}
+
+export interface ModeBChain {
+  ownerId: string;
+  ownerName: string;
+  word: string;
+  steps: ModeBChainStep[];
 }

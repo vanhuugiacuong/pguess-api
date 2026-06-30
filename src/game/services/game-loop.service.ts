@@ -48,15 +48,17 @@ export class GameLoopService {
     const room = this.roomRepository.get(targetRoomId);
     if (!room) throw new NotFoundException('Room not found');
 
-    if (room.players.length < 2) {
+    const mode = room.settings?.mode || 'A';
+    const minPlayers = mode === 'B' ? 3 : 2;
+    if (room.players.length < minPlayers) {
       throw new BadRequestException(
-        'Cần tối thiểu 2 người chơi để bắt đầu game!',
+        `Cần tối thiểu ${minPlayers} người chơi để bắt đầu game!`,
       );
     }
 
     this.roomCallbacks.set(room.roomId, { onStateUpdate, onChatMessage });
     room.roundNumber = 1;
-    room.maxRounds = room.players.length;
+    room.maxRounds = room.settings?.mode === 'B' ? room.players.length * room.players.length : room.players.length;
 
     room.players.forEach((p) => {
       p.hasGuessedCorrectly = false;
@@ -106,6 +108,37 @@ export class GameLoopService {
     room.hintsRevealed = 0;
     room.phase = 'PLAYING'; // Transition to playing!
 
+    const drawer = room.players.find((p) => p.id === playerId);
+    if (drawer) {
+      drawer.drawingWord = room.currentWord;
+    }
+
+    if (room.settings?.mode === 'B') {
+      const R = room.roundNumber ?? 1;
+      const N = room.players.length;
+      const k = Math.floor((R - 1) / N);
+
+      const owner = room.players[k];
+      const newChain = {
+        ownerId: owner.id,
+        ownerName: owner.name,
+        word: room.currentWord,
+        steps: [
+          {
+            type: 'word' as const,
+            player: {
+              id: owner.id,
+              name: owner.name,
+              avatar: owner.avatar,
+            },
+            content: `HÃY VẼ: "${room.currentWord.toUpperCase()}"`,
+          }
+        ]
+      };
+      if (!room.modeBChains) room.modeBChains = [];
+      room.modeBChains.push(newChain);
+    }
+
     this.roomRepository.save(targetRoomId, room);
 
     // Broadcast system message about the word selected
@@ -146,15 +179,17 @@ export class GameLoopService {
       p.isDrawing = false;
     });
 
-    const wordBank = this.wordHintService.getWordBank(
-      room.settings?.wordCategory,
-      room.settings?.customWordBank,
-    );
-    const randIndex = Math.floor(Math.random() * wordBank.length);
-    room.currentWord = wordBank[randIndex];
-    room.obfuscatedWord = this.wordHintService.obfuscate(room.currentWord);
-
     const mode = room.settings?.mode || 'A';
+    if (mode === 'A') {
+      const wordBank = this.wordHintService.getWordBank(
+        room.settings?.wordCategory,
+        room.settings?.customWordBank,
+      );
+      const randIndex = Math.floor(Math.random() * wordBank.length);
+      room.currentWord = wordBank[randIndex];
+      room.obfuscatedWord = this.wordHintService.obfuscate(room.currentWord);
+    }
+
     const strategy = this.getStrategy(mode);
     strategy.setupRound(room);
 
